@@ -512,6 +512,63 @@ def render_table_html(row_labels_html, file_names, cell_matrix, orientation, hea
     html.append("</table></div>")
     return "\n".join(html)
 
+def get_shared_cif_paths():
+    if "shared_uploaded_bytes" not in st.session_state:
+        st.session_state.shared_uploaded_bytes = {}
+    if "shared_folder_paths" not in st.session_state:
+        st.session_state.shared_folder_paths = []
+
+    st.subheader("Wybierz pliki CIF")
+
+    loaded_names = list(st.session_state.shared_uploaded_bytes.keys()) + \
+        [p.name for p in st.session_state.shared_folder_paths]
+    if loaded_names:
+        st.caption(f"Aktualnie wczytane pliki (wspolne dla wszystkich stron, {len(loaded_names)}): "
+                    f"{', '.join(sorted(loaded_names, key=natural_key))}")
+        if st.button("Wyczysc wszystkie wczytane pliki", key="shared_clear_btn"):
+            st.session_state.shared_uploaded_bytes = {}
+            st.session_state.shared_folder_paths = []
+            st.rerun()
+    input_mode = st.radio(
+        "Dodaj kolejne pliki",
+        ["Dodaj pojedyncze pliki", "Podaj sciezke do folderu"],
+        horizontal=True,
+        key="shared_input_mode",
+    )
+
+    if input_mode == "Dodaj pojedyncze pliki":
+        uploaded = st.file_uploader(
+            "Wybierz plik(i) CIF", type=["cif"], accept_multiple_files=True,
+            key="shared_uploader",
+        )
+        if uploaded:
+            for uf in uploaded:
+                st.session_state.shared_uploaded_bytes[uf.name] = uf.getvalue()
+    else:
+        folder_str = st.text_input("Sciezka do folderu z plikami .cif", value="",
+                                   key="shared_folder_input")
+        if folder_str:
+            folder = Path(folder_str)
+            if folder.is_dir():
+                found =  sorted(folder.glob("*.cif"), key = lambda f: natural_key(f.name))
+                if not found:
+                    st.warning("W tym folderze nie znaleziono zadnych plikow .cif")
+                else:
+                    st.session_state.shared_folder_paths = found
+            else:
+                st.error("Podana sciezka nie istnieje albo nie jest folderem")
+
+    cif_paths = []
+    if st.session_state.shared_uploaded_bytes:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="cif_shared_"))
+        for fname, data in st.session_state.shared_uploaded_bytes.items():
+            p = tmp_dir / fname
+            p.write_bytes(data)
+            cif_paths.append(p)
+    cif_paths += list(st.session_state.shared_folder_paths)
+    return sorted(cif_paths, key=lambda f: natural_key(f.name))
+
+
 
 def load_cif_paths_from_uploads(uploaded_files):
     if not uploaded_files:
@@ -543,30 +600,8 @@ def build_all_structures(cif_paths):
 
 def page_multi_report():
     st.title("Multi report")
-
-    st.subheader("Wybierz pliki CIF")
-    input_mode = st.radio(
-        "Zródło plików",
-        ["Dodaj pojedyncze pliki", "Podaj scieżkę do folderu"],
-        horizontal=True,
-    )
-
-    cif_paths = []
-    if input_mode == "Dodaj pojedyncze pliki":
-        uploaded = st.file_uploader(
-            "Wybierz plik(i) CIF", type=["cif"], accept_multiple_files=True
-        )
-        cif_paths = load_cif_paths_from_uploads(uploaded)
-    else:
-        folder_str = st.text_input("Scieżka do folderu z plikami .cif", value="")
-        if folder_str:
-            folder = Path(folder_str)
-            if folder.is_dir():
-                cif_paths = sorted(folder.glob("*.cif"), key=lambda f: natural_key(f.name))
-                if not cif_paths:
-                    st.warning("W tym folderze nie znaleziono zadnych plikow .cif")
-            else:
-                st.error("Podana scieżka nie istnieje albo nie jest folderem")
+    
+    cif_paths = get_shared_cif_paths()
 
     if not cif_paths:
         st.info("Wgraj pliki albo podaj folder, żeby zobaczyc tabele")
@@ -597,24 +632,6 @@ def page_multi_report():
         d["_computed_cumulative_exposure_time"] = f"{running_total:.2f}"
 
     st.success(f"Wczytano {len(all_structures)} struktur(y) z {len(cif_paths)} pliku(ów)")
-
-    st.subheader("Occupancy")
-
-    path_by_name = {p.name: p for p in cif_paths}
-
-    available_atoms = set()
-    for file_name, data_name, _, _ in all_structures:
-        file_path = path_by_name.get(file_name)
-        if file_path is not None:
-            available_atoms.update(get_available_atom_names(file_path, data_name))
-    available_atoms_sorted = sorted(available_atoms, key=natural_key)
-
-    if not available_atoms_sorted:
-        st.caption("Brak _shelx_res_file")
-        occupancy_names = []
-    else:
-        occupancy_names = st.multiselect("Wybierz atomy do occupancy",
-                                          options=available_atoms_sorted)
 
     st.subheader("Ustawienia tabeli")
 
@@ -657,11 +674,6 @@ def page_multi_report():
 
     st.subheader("Tabela")
     row_labels_html, cell_matrix = build_matrix(all_files_data, all_file_names, selected_labels)
-
-    if occupancy_names:
-        occ_row_labels, occ_matrix = build_occupancy_rows(occupancy_names, all_structures, path_by_name)
-        row_labels_html += occ_row_labels
-        cell_matrix += occ_matrix
 
     if orientation == "files_cols" and len(all_file_names) > max_columns:
         chunks = []
@@ -1780,6 +1792,67 @@ def atom_list_col(label, example_atoms):
         help=f"Kilka atomow oddzielonych ';'. Symcode domyslnie x,y,z jesli pominiety. "
              f"Przyklad: {example}"
     )
+
+def page_occupancy():
+    st.title("Occupancy")
+
+    cif_paths = get_shared_cif_paths()
+
+    if not cif_paths:
+        st.info("Wgraj pliki albo podaj folder")
+        return
+
+    all_structures = build_all_structures(cif_paths)
+    if not all_structures:
+        st.warning("Nie udało się wczytać zadnej struktury z podanych plików")
+        return
+
+    path_by_name = {p.name: p for p in cif_paths}
+
+    structure_count_per_file = {}
+    for file_name, _, _, _ in all_structures:
+        structure_count_per_file[file_name] = structure_count_per_file.get(file_name, 0) + 1
+
+    all_file_names = []
+    for file_name, data_name, _, _ in all_structures:
+        if structure_count_per_file[file_name] == 1:
+            all_file_names.append(file_name)
+        else:
+            all_file_names.append(f"{file_name}:{data_name}")
+
+    st.success(f"Wczytano {len(all_structures)} struktur(y) z {len(cif_paths)} pliku(ów)")
+
+    available_atoms = set()
+    for file_name, data_name, _, _ in all_structures:
+        file_path = path_by_name.get(file_name)
+        if file_path is not None:
+            available_atoms.update(get_available_atom_names(file_path, data_name))
+    available_atoms_sorted = sorted(available_atoms, key=natural_key)
+
+    if not available_atoms_sorted:
+        st.caption("Brak _shelx_res_file w wgranych plikach.")
+        return
+
+    occupancy_names = st.multiselect("Wybierz atomy do occupancy", options=available_atoms_sorted)
+    if not occupancy_names:
+        st.info("Wybierz przynajmniej jeden atom.")
+        return
+
+    orientation_label = st.radio(
+        "Sposob prezentacji tabeli",
+        ["Pliki w kolumnach, parametry w wierszach", "Parametry w kolumnach, pliki w wierszach"],
+    )
+    orientation = "files_cols" if orientation_label.startswith("Pliki") else "params_cols"
+
+    occ_row_labels, occ_matrix = build_occupancy_rows(occupancy_names, all_structures, path_by_name)
+
+    st.subheader("Tabela")
+    table_html = render_table_html(occ_row_labels, all_file_names, occ_matrix, orientation,
+                                    heading="Occupancy")
+    st.markdown(table_html, unsafe_allow_html=True)
+
+    full_doc = f"<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>{table_html}</body></html>"
+    st.download_button("Pobierz jako plik HTML", data=full_doc, file_name="occupancy.html", mime="text/html")
 
 
 def page_super_cell():
