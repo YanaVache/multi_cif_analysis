@@ -512,11 +512,23 @@ def render_table_html(row_labels_html, file_names, cell_matrix, orientation, hea
     html.append("</table></div>")
     return "\n".join(html)
 
+
 def get_shared_cif_paths():
+    """Wspolny wybor plikow CIF, DZIALAJACY NAPRAWDE MIEDZY STRONAMI.
+
+    st.file_uploader NIE pamieta swojej zawartosci przy przechodzeniu miedzy
+    stronami w katalogu pages/ - to potwierdzony brak Streamlit (issue #4989 na ich
+    GitHubie), wystepujacy nawet przy tym samym kluczu (key) widgetu. Dlatego
+    zamiast polegac na "pamieci" widgetu, przechowujemy SAME DANE (bajty plikow,
+    liste z folderu) w st.session_state - to dziala niezawodnie na kazdej stronie.
+
+    Kazda strona wywoluje TA SAMA funkcje: pokazuje liste juz wczytanych plikow
+    (wspolna, z KAZDEJ strony), i pozwala DODAC wiecej (nowy upload/nowy folder
+    DOKLADA sie do wspolnej listy, nie zastepuje jej)."""
     if "shared_uploaded_bytes" not in st.session_state:
-        st.session_state.shared_uploaded_bytes = {}
+        st.session_state.shared_uploaded_bytes = {}  # {nazwa_pliku: bytes}
     if "shared_folder_paths" not in st.session_state:
-        st.session_state.shared_folder_paths = []
+        st.session_state.shared_folder_paths = []  # lista Path z ostatnio podanego folderu
 
     st.subheader("Wybierz pliki CIF")
 
@@ -524,11 +536,12 @@ def get_shared_cif_paths():
         [p.name for p in st.session_state.shared_folder_paths]
     if loaded_names:
         st.caption(f"Aktualnie wczytane pliki (wspolne dla wszystkich stron, {len(loaded_names)}): "
-                    f"{', '.join(sorted(loaded_names, key=natural_key))}")
+                   f"{', '.join(sorted(loaded_names, key=natural_key))}")
         if st.button("Wyczysc wszystkie wczytane pliki", key="shared_clear_btn"):
             st.session_state.shared_uploaded_bytes = {}
             st.session_state.shared_folder_paths = []
             st.rerun()
+
     input_mode = st.radio(
         "Dodaj kolejne pliki",
         ["Dodaj pojedyncze pliki", "Podaj sciezke do folderu"],
@@ -546,11 +559,11 @@ def get_shared_cif_paths():
                 st.session_state.shared_uploaded_bytes[uf.name] = uf.getvalue()
     else:
         folder_str = st.text_input("Sciezka do folderu z plikami .cif", value="",
-                                   key="shared_folder_input")
+                                    key="shared_folder_input")
         if folder_str:
             folder = Path(folder_str)
             if folder.is_dir():
-                found =  sorted(folder.glob("*.cif"), key = lambda f: natural_key(f.name))
+                found = sorted(folder.glob("*.cif"), key=lambda f: natural_key(f.name))
                 if not found:
                     st.warning("W tym folderze nie znaleziono zadnych plikow .cif")
                 else:
@@ -558,6 +571,8 @@ def get_shared_cif_paths():
             else:
                 st.error("Podana sciezka nie istnieje albo nie jest folderem")
 
+    # materializujemy bajty do plikow tymczasowych, zeby reszta kodu (ktora
+    # oczekuje sciezek na dysku) dzialala bez zmian
     cif_paths = []
     if st.session_state.shared_uploaded_bytes:
         tmp_dir = Path(tempfile.mkdtemp(prefix="cif_shared_"))
@@ -566,8 +581,8 @@ def get_shared_cif_paths():
             p.write_bytes(data)
             cif_paths.append(p)
     cif_paths += list(st.session_state.shared_folder_paths)
-    return sorted(cif_paths, key=lambda f: natural_key(f.name))
 
+    return sorted(cif_paths, key=lambda f: natural_key(f.name))
 
 
 def load_cif_paths_from_uploads(uploaded_files):
@@ -600,11 +615,11 @@ def build_all_structures(cif_paths):
 
 def page_multi_report():
     st.title("Multi report")
-    
+
     cif_paths = get_shared_cif_paths()
 
     if not cif_paths:
-        st.info("Wgraj pliki albo podaj folder, żeby zobaczyc tabele")
+        st.info("Wgraj pliki albo podaj folder")
         return
 
     all_structures = build_all_structures(cif_paths)
@@ -1793,6 +1808,7 @@ def atom_list_col(label, example_atoms):
              f"Przyklad: {example}"
     )
 
+
 def page_occupancy():
     st.title("Occupancy")
 
@@ -1858,30 +1874,7 @@ def page_occupancy():
 def page_super_cell():
     st.title("Super-cell")
 
-    st.subheader("Wybierz pliki CIF")
-    input_mode = st.radio(
-        "Zrodlo plikow",
-        ["Dodaj pojedyncze pliki", "Podaj sciezke do folderu"],
-        horizontal=True,
-        key="sc_input_mode",
-    )
-
-    cif_paths = []
-    if input_mode == "Dodaj pojedyncze pliki":
-        uploaded = st.file_uploader(
-            "Wybierz plik(i) CIF", type=["cif"], accept_multiple_files=True, key="sc_uploader"
-        )
-        cif_paths = load_cif_paths_from_uploads(uploaded)
-    else:
-        folder_str = st.text_input("Sciezka do folderu z plikami .cif", value="", key="sc_folder")
-        if folder_str:
-            folder = Path(folder_str)
-            if folder.is_dir():
-                cif_paths = sorted(folder.glob("*.cif"), key=lambda f: natural_key(f.name))
-                if not cif_paths:
-                    st.warning("W tym folderze nie znaleziono zadnych plikow .cif")
-            else:
-                st.error("Podana sciezka nie istnieje albo nie jest folderem")
+    cif_paths = get_shared_cif_paths()
 
     if not cif_paths:
         st.info("Wgraj pliki albo podaj folder")
@@ -2028,7 +2021,6 @@ def page_super_cell():
 
     st.divider()
     st.subheader("Obliczenia geometryczne")
-
     # ==================== ODLEGLOSC ====================
     st.markdown("### Odleglosc")
     default_df = pd.DataFrame([{"Atom 1": None, "Symcode 1": "x,y,z", "Atom 2": None, "Symcode 2": "x,y,z"}])
@@ -2117,6 +2109,7 @@ def page_super_cell():
 
     # ==================== TRZY ATOMY: ODLEGLOSCI + KAT ====================
     st.markdown("### Trzy atomy: dist(1,3), dist(1,2), kat(1,2,3)")
+    st.caption("Wierzcholek kata jest na Atomie 2 ")
     default_df = pd.DataFrame([{"Atom 1": None, "Symcode 1": "x,y,z", "Atom 2": None, "Symcode 2": "x,y,z",
                                  "Atom 3": None, "Symcode 3": "x,y,z"}])
     edited = st.data_editor(
@@ -2235,7 +2228,7 @@ def page_super_cell():
 
     # ==================== CENTROID <-> CENTROID ====================
     st.markdown("### Centroid <-> centroid")
-    st.caption("Kazdy wiersz to JEDNO zapytanie. Obie grupy wybierasz z listy zdefiniowanej powyzej")
+    st.caption("Kazdy wiersz to JEDNO zapytanie. Obie grupy wybierasz z listy zdefiniowanej powyzej.")
     default_df = pd.DataFrame([{"Grupa 1": None, "Grupa 2": None}])
     edited = st.data_editor(
         default_df, num_rows="dynamic", use_container_width=True, key="c2c_editor",
@@ -2251,7 +2244,7 @@ def page_super_cell():
             g1 = named_groups.get(g1name, [])
             g2 = named_groups.get(g2name, [])
             if not g1 or not g2:
-                st.warning(f"'{g1name}' i '{g2name}' musza miec min. 1 atom kazda")
+                st.warning(f"'{g1name}' i '{g2name}' musza miec min. 1 atom kazda.")
                 continue
             names1 = [a for a, s in g1]; symcodes1 = [s for a, s in g1]
             names2 = [a for a, s in g2]; symcodes2 = [s for a, s in g2]
@@ -2266,8 +2259,8 @@ def page_super_cell():
     st.divider()
 
     # ==================== OBJETOSC WIELOSCIANU ====================
-    st.markdown("### Objetosc wielosciamu")
-    st.caption("Kazdy wiersz to JEDNO zapytanie, wybierz grupe zdefiniowana powyzej (min. 4 atomy)")
+    st.markdown("### Objetosc wielosciamu (poly_volume) - bez sigma, ta funkcja nie ma wersji z odchyleniem")
+    st.caption("Kazdy wiersz to JEDNO zapytanie - wybierz grupe zdefiniowana powyzej (min. 4 atomy).")
     default_df = pd.DataFrame([{"Grupa": None}])
     edited = st.data_editor(
         default_df, num_rows="dynamic", use_container_width=True, key="vol_editor",
@@ -2281,7 +2274,7 @@ def page_super_cell():
                 continue
             group_atoms = named_groups.get(gname, [])
             if len(group_atoms) < 4:
-                st.warning(f"Grupa '{gname}' ma za malo atomow (min. 4, jest {len(group_atoms)})")
+                st.warning(f"Grupa '{gname}' ma za malo atomow (min. 4, jest {len(group_atoms)}).")
                 continue
             names = [a for a, s in group_atoms]
             symcodes = [s for a, s in group_atoms]
@@ -2357,7 +2350,7 @@ def page_super_cell():
         tolerance = st.number_input("tolerancja vdW", value=0.2, key="wc_tol")
     with col4:
         search_range_wc = st.number_input("search_range", value=1, min_value=0, step=1, key="wc_range")
-    st.caption("Ustawienia powyzej sa WSPOLNE dla wszystkich wierszy ponizej")
+    st.caption("Ustawienia powyzej sa WSPOLNE dla wszystkich wierszy ponizej.")
     default_df = pd.DataFrame([{"Atom 1 (donor)": None, "Symcode 1": "x,y,z", "Atom 2 (rodzic)": None,
                                  "Symcode 2": "x,y,z", "Szukany pierwiastek": "O"}])
     edited = st.data_editor(
@@ -2473,7 +2466,7 @@ def page_super_cell():
             names1 = [a for a, s in g1]
             symcodes1 = [s for a, s in g1]
             if len(names1) < 3:
-                st.warning(f"'{g1name}' potrzebuje min. 3 atomow (jest {len(names1)})")
+                st.warning(f"'{g1name}' potrzebuje min. 3 atomow (jest {len(names1)}).")
                 continue
             names2, symcodes2 = None, None
             if not is_empty_cell(g2name):
@@ -2508,7 +2501,7 @@ def page_super_cell():
             cell_matrix = [rows_by_key[k] for k in keys]
             append_results("Pi-pi", row_labels_html_list, cell_matrix, all_file_names)
             show_immediate_preview(row_labels_html_list, all_file_names, cell_matrix)
-        st.success("Dodano wyniki pi-pi do wspolnej tabeli na dole strony")
+        st.success("Dodano wyniki pi-pi do wspolnej tabeli na dole strony.")
 
     st.divider()
     render_accumulated_results()
