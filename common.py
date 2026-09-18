@@ -1644,7 +1644,7 @@ def render_group_builder(available_atoms_sorted, available_symcodes_sorted, key_
     na grupe, z [Edytuj]/[Usun]. Grupy trzymane w st.session_state.sc_named_groups
     ({nazwa: [(atom, symcode), ...]}) - zwracane, zeby funkcje ponizej mogly sie
     do nich odwolywac przez SAMA NAZWE zamiast wpisywac atomy na nowo za kazdym razem."""
-    st.markdown("### Grupy atomow (pierscienie / plaszczyzny) - zdefiniuj raz, uzywaj wszedzie ponizej")
+    st.markdown("### Grupy atomow (pierscienie / plaszczyzny / wielościany) - zdefiniuj raz, uzywaj wszedzie ponizej")
 
     if "sc_named_groups" not in st.session_state:
         st.session_state.sc_named_groups = {}
