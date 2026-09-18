@@ -1,0 +1,5 @@
+streamlit
+gemmi
+numpy
+pandas
+scipy
